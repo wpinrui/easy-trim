@@ -17,11 +17,19 @@ export function usePlayer() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [direction, setDirection] = useState<PlaybackDirection>('paused');
   const [speed, setSpeed] = useState(1);
+  const [muted, setMuted] = useState(false);
 
   // Apply forward speed to the video element when either changes.
   useEffect(() => {
     if (videoEl) videoEl.playbackRate = speed;
   }, [speed, videoEl]);
+
+  // Apply muted state to the video element.
+  useEffect(() => {
+    if (videoEl) videoEl.muted = muted;
+  }, [muted, videoEl]);
+
+  const toggleMute = useCallback(() => setMuted((m) => !m), []);
 
   // Reverse playback uses rAF, since Chromium does not honor negative playbackRate reliably.
   const rafRef = useRef<number | null>(null);
@@ -160,6 +168,8 @@ export function usePlayer() {
     direction,
     speed,
     setSpeed,
+    muted,
+    toggleMute,
     playForward,
     playBackward,
     pause,

@@ -8,6 +8,8 @@ import {
   Play24Filled,
   Pause24Filled,
   Rewind24Filled,
+  Speaker224Regular,
+  SpeakerMute24Filled,
   FullScreenMaximize24Regular
 } from '@fluentui/react-icons';
 import { formatTime } from '../lib/format';
@@ -21,6 +23,8 @@ type Props = {
   direction: 'forward' | 'backward' | 'paused';
   speed: number;
   setSpeed: (s: number) => void;
+  muted: boolean;
+  onToggleMute: () => void;
   onPlayForward: () => void;
   onPlayBackward: () => void;
   onPause: () => void;
@@ -38,6 +42,8 @@ export function VideoPlayer({
   direction,
   speed,
   setSpeed,
+  muted,
+  onToggleMute,
   onPlayForward,
   onPlayBackward,
   onPause,
@@ -135,6 +141,14 @@ export function VideoPlayer({
               </Option>
             ))}
           </Dropdown>
+        </Tooltip>
+        <Tooltip content={muted ? 'Unmute' : 'Mute'} relationship="label">
+          <Button
+            appearance={muted ? 'primary' : 'subtle'}
+            icon={muted ? <SpeakerMute24Filled /> : <Speaker224Regular />}
+            onClick={onToggleMute}
+            disabled={!src}
+          />
         </Tooltip>
         <Tooltip content="Toggle fullscreen (F)" relationship="label">
           <Button

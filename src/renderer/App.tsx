@@ -234,6 +234,8 @@ export function App() {
           direction={player.direction}
           speed={player.speed}
           setSpeed={player.setSpeed}
+          muted={player.muted}
+          onToggleMute={player.toggleMute}
           onPlayForward={player.playForward}
           onPlayBackward={player.playBackward}
           onPause={player.pause}
