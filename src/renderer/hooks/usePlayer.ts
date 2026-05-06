@@ -3,19 +3,25 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export type PlaybackDirection = 'forward' | 'backward' | 'paused';
 
 export function usePlayer() {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Element is tracked in *state* (not just a ref) so effects re-run when the
+  // <video> mounts after the user opens a file. A plain ref doesn't trigger
+  // re-renders, which previously left the timeupdate listener unattached and
+  // pinned currentTime at 0.
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const videoRefCallback = useCallback((el: HTMLVideoElement | null) => {
+    setVideoEl(el);
+  }, []);
+
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [direction, setDirection] = useState<PlaybackDirection>('paused');
   const [speed, setSpeed] = useState(1);
 
-  // Apply forward speed to the video element.
+  // Apply forward speed to the video element when either changes.
   useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.playbackRate = speed;
-  }, [speed]);
+    if (videoEl) videoEl.playbackRate = speed;
+  }, [speed, videoEl]);
 
   // Reverse playback uses rAF, since Chromium does not honor negative playbackRate reliably.
   const rafRef = useRef<number | null>(null);
@@ -33,16 +39,15 @@ export function usePlayer() {
     (rate: number) => {
       stopReverseLoop();
       const tick = (now: number) => {
-        const v = videoRef.current;
-        if (!v) {
+        if (!videoEl) {
           stopReverseLoop();
           return;
         }
         if (lastTickRef.current == null) lastTickRef.current = now;
         const dt = (now - lastTickRef.current) / 1000;
         lastTickRef.current = now;
-        const next = Math.max(0, v.currentTime - rate * dt);
-        v.currentTime = next;
+        const next = Math.max(0, videoEl.currentTime - rate * dt);
+        videoEl.currentTime = next;
         if (next <= 0) {
           stopReverseLoop();
           setIsPlaying(false);
@@ -53,57 +58,55 @@ export function usePlayer() {
       };
       rafRef.current = requestAnimationFrame(tick);
     },
-    [stopReverseLoop]
+    [stopReverseLoop, videoEl]
   );
 
   useEffect(() => () => stopReverseLoop(), [stopReverseLoop]);
 
   const playForward = useCallback(() => {
-    const v = videoRef.current;
-    if (!v) return;
+    if (!videoEl) return;
     stopReverseLoop();
-    v.playbackRate = speed;
-    void v.play();
+    videoEl.playbackRate = speed;
+    void videoEl.play();
     setIsPlaying(true);
     setDirection('forward');
-  }, [speed, stopReverseLoop]);
+  }, [speed, stopReverseLoop, videoEl]);
 
   const playBackward = useCallback(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.pause();
+    if (!videoEl) return;
+    videoEl.pause();
     setIsPlaying(true);
     setDirection('backward');
     startReverseLoop(speed);
-  }, [speed, startReverseLoop]);
+  }, [speed, startReverseLoop, videoEl]);
 
   const pause = useCallback(() => {
-    const v = videoRef.current;
-    if (v) v.pause();
+    if (videoEl) videoEl.pause();
     stopReverseLoop();
     setIsPlaying(false);
     setDirection('paused');
-  }, [stopReverseLoop]);
+  }, [stopReverseLoop, videoEl]);
 
   const togglePlayPause = useCallback(() => {
     if (isPlaying) pause();
     else playForward();
   }, [isPlaying, pause, playForward]);
 
-  const seek = useCallback((t: number) => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = Math.max(0, Math.min(v.duration || t, t));
-  }, []);
+  const seek = useCallback(
+    (t: number) => {
+      if (!videoEl) return;
+      videoEl.currentTime = Math.max(0, Math.min(videoEl.duration || t, t));
+    },
+    [videoEl]
+  );
 
   const step = useCallback(
     (deltaSeconds: number) => {
-      const v = videoRef.current;
-      if (!v) return;
+      if (!videoEl) return;
       pause();
-      seek(v.currentTime + deltaSeconds);
+      seek(videoEl.currentTime + deltaSeconds);
     },
-    [pause, seek]
+    [pause, seek, videoEl]
   );
 
   // When speed changes during reverse playback, restart the loop with the new rate.
@@ -111,44 +114,46 @@ export function usePlayer() {
     if (direction === 'backward') startReverseLoop(speed);
   }, [speed, direction, startReverseLoop]);
 
-  // Sync to media events.
+  // Sync to media events. Re-attaches when the <video> mounts/unmounts.
   useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    const onTime = () => setCurrentTime(v.currentTime);
-    const onMeta = () => setDuration(Number.isFinite(v.duration) ? v.duration : 0);
+    if (!videoEl) return;
+    const onTime = () => setCurrentTime(videoEl.currentTime);
+    const onMeta = () => setDuration(Number.isFinite(videoEl.duration) ? videoEl.duration : 0);
     const onEnd = () => {
       setIsPlaying(false);
       setDirection('paused');
     };
+    const onPlay = () => setIsPlaying(true);
     const onPause = () => {
-      // If paused due to reaching end / external action, sync our state.
-      if (direction === 'forward') {
-        setIsPlaying(false);
-        setDirection('paused');
-      }
+      // Keep React state in sync if the video element pauses for any reason.
+      setIsPlaying(false);
+      setDirection((d) => (d === 'backward' ? d : 'paused'));
     };
-    v.addEventListener('timeupdate', onTime);
-    v.addEventListener('seeking', onTime);
-    v.addEventListener('seeked', onTime);
-    v.addEventListener('loadedmetadata', onMeta);
-    v.addEventListener('durationchange', onMeta);
-    v.addEventListener('ended', onEnd);
-    v.addEventListener('pause', onPause);
+    videoEl.addEventListener('timeupdate', onTime);
+    videoEl.addEventListener('seeking', onTime);
+    videoEl.addEventListener('seeked', onTime);
+    videoEl.addEventListener('loadedmetadata', onMeta);
+    videoEl.addEventListener('durationchange', onMeta);
+    videoEl.addEventListener('ended', onEnd);
+    videoEl.addEventListener('play', onPlay);
+    videoEl.addEventListener('pause', onPause);
+    // Initialize from current state in case the video has already loaded by the time we attach.
+    onMeta();
+    onTime();
     return () => {
-      v.removeEventListener('timeupdate', onTime);
-      v.removeEventListener('seeking', onTime);
-      v.removeEventListener('seeked', onTime);
-      v.removeEventListener('loadedmetadata', onMeta);
-      v.removeEventListener('durationchange', onMeta);
-      v.removeEventListener('ended', onEnd);
-      v.removeEventListener('pause', onPause);
+      videoEl.removeEventListener('timeupdate', onTime);
+      videoEl.removeEventListener('seeking', onTime);
+      videoEl.removeEventListener('seeked', onTime);
+      videoEl.removeEventListener('loadedmetadata', onMeta);
+      videoEl.removeEventListener('durationchange', onMeta);
+      videoEl.removeEventListener('ended', onEnd);
+      videoEl.removeEventListener('play', onPlay);
+      videoEl.removeEventListener('pause', onPause);
     };
-    // We attach once per videoRef.current — re-running on every direction change is fine.
-  }, [direction]);
+  }, [videoEl]);
 
   return {
-    videoRef,
+    videoRefCallback,
     currentTime,
     duration,
     isPlaying,

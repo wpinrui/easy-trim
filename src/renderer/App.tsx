@@ -226,7 +226,7 @@ export function App() {
         }}
       >
         <VideoPlayer
-          ref={player.videoRef}
+          videoRef={player.videoRefCallback}
           src={videoSrc}
           currentTime={player.currentTime}
           duration={player.duration}

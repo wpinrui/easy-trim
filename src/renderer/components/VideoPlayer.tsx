@@ -1,22 +1,20 @@
-import { forwardRef, useEffect, useRef } from 'react';
 import {
   Button,
   Dropdown,
   Option,
-  Slider,
   Tooltip
 } from '@fluentui/react-components';
 import {
   Play24Filled,
   Pause24Filled,
   Rewind24Filled,
-  Speaker224Regular,
   FullScreenMaximize24Regular
 } from '@fluentui/react-icons';
 import { formatTime } from '../lib/format';
 
 type Props = {
   src: string | null;
+  videoRef: (el: HTMLVideoElement | null) => void;
   currentTime: number;
   duration: number;
   isPlaying: boolean;
@@ -31,44 +29,20 @@ type Props = {
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 
-export const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPlayer(
-  {
-    src,
-    currentTime,
-    duration,
-    isPlaying,
-    direction,
-    speed,
-    setSpeed,
-    onPlayForward,
-    onPlayBackward,
-    onPause,
-    onToggleFullscreen
-  },
-  ref
-) {
-  const localRef = useRef<HTMLVideoElement | null>(null);
-  const setRefs = (el: HTMLVideoElement | null) => {
-    localRef.current = el;
-    if (typeof ref === 'function') ref(el);
-    else if (ref) (ref as React.MutableRefObject<HTMLVideoElement | null>).current = el;
-  };
-
-  // Volume / mute UI
-  const volumeRef = useRef(1);
-  const onVolumeChange = (v: number) => {
-    volumeRef.current = v;
-    if (localRef.current) localRef.current.volume = v;
-  };
-  const toggleMute = () => {
-    if (!localRef.current) return;
-    localRef.current.muted = !localRef.current.muted;
-  };
-
-  useEffect(() => {
-    if (localRef.current) localRef.current.volume = volumeRef.current;
-  }, [src]);
-
+export function VideoPlayer({
+  src,
+  videoRef,
+  currentTime,
+  duration,
+  isPlaying,
+  direction,
+  speed,
+  setSpeed,
+  onPlayForward,
+  onPlayBackward,
+  onPause,
+  onToggleFullscreen
+}: Props) {
   return (
     <div
       style={{
@@ -91,7 +65,7 @@ export const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPla
       >
         {src ? (
           <video
-            ref={setRefs}
+            ref={videoRef}
             src={src}
             style={{ maxHeight: '100%', maxWidth: '100%' }}
             controls={false}
@@ -123,7 +97,10 @@ export const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPla
             disabled={!src}
           />
         </Tooltip>
-        <Tooltip content={isPlaying ? 'Pause (K / Space)' : 'Play (L / Space)'} relationship="label">
+        <Tooltip
+          content={isPlaying ? 'Pause (K / Space)' : 'Play (L / Space)'}
+          relationship="label"
+        >
           <Button
             appearance={direction === 'forward' ? 'primary' : 'subtle'}
             icon={isPlaying ? <Pause24Filled /> : <Play24Filled />}
@@ -159,18 +136,6 @@ export const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPla
             ))}
           </Dropdown>
         </Tooltip>
-        <Tooltip content="Mute" relationship="label">
-          <Button appearance="subtle" icon={<Speaker224Regular />} onClick={toggleMute} />
-        </Tooltip>
-        <Slider
-          min={0}
-          max={1}
-          step={0.01}
-          defaultValue={1}
-          onChange={(_, data) => onVolumeChange(data.value)}
-          style={{ width: 100 }}
-          aria-label="Volume"
-        />
         <Tooltip content="Toggle fullscreen (F)" relationship="label">
           <Button
             appearance="subtle"
@@ -182,4 +147,4 @@ export const VideoPlayer = forwardRef<HTMLVideoElement, Props>(function VideoPla
       </div>
     </div>
   );
-});
+}
