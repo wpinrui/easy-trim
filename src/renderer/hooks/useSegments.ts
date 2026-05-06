@@ -8,9 +8,80 @@ import {
   sortSegments
 } from '../lib/segments';
 
+const HISTORY_LIMIT = 100;
+
+type History = {
+  past: Segment[][];
+  present: Segment[];
+  future: Segment[][];
+};
+
+const empty: History = { past: [], present: [], future: [] };
+
+function pushPast(past: Segment[][], snapshot: Segment[]): Segment[][] {
+  const next = [...past, snapshot];
+  if (next.length > HISTORY_LIMIT) next.shift();
+  return next;
+}
+
 export function useSegments(duration: number) {
-  const [segments, setSegments] = useState<Segment[]>([]);
+  const [hist, setHist] = useState<History>(empty);
   const [pendingIn, setPendingIn] = useState<number | null>(null);
+
+  const segments = hist.present;
+
+  /** Apply an update and record the previous state in history. */
+  const commit = useCallback((updater: (prev: Segment[]) => Segment[]) => {
+    setHist((prev) => {
+      const next = updater(prev.present);
+      if (next === prev.present) return prev;
+      return { past: pushPast(prev.past, prev.present), present: next, future: [] };
+    });
+  }, []);
+
+  /**
+   * Snapshot current state into history without changing it.
+   * Use before a continuous edit (e.g. an edge drag) so the whole drag
+   * collapses into one undo step.
+   */
+  const beginEdit = useCallback(() => {
+    setHist((prev) => ({
+      past: pushPast(prev.past, prev.present),
+      present: prev.present,
+      future: []
+    }));
+  }, []);
+
+  /** Update without recording history (use after beginEdit during a drag). */
+  const updateWithoutHistory = useCallback((updater: (prev: Segment[]) => Segment[]) => {
+    setHist((prev) => ({ ...prev, present: updater(prev.present) }));
+  }, []);
+
+  const undo = useCallback(() => {
+    setHist((prev) => {
+      if (prev.past.length === 0) return prev;
+      const previous = prev.past[prev.past.length - 1];
+      return {
+        past: prev.past.slice(0, -1),
+        present: previous,
+        future: [prev.present, ...prev.future]
+      };
+    });
+    setPendingIn(null);
+  }, []);
+
+  const redo = useCallback(() => {
+    setHist((prev) => {
+      if (prev.future.length === 0) return prev;
+      const [next, ...rest] = prev.future;
+      return {
+        past: pushPast(prev.past, prev.present),
+        present: next,
+        future: rest
+      };
+    });
+    setPendingIn(null);
+  }, []);
 
   const addSegment = useCallback(
     (start: number, end: number) => {
@@ -20,36 +91,38 @@ export function useSegments(duration: number) {
       if (b - a < 0.05) return null;
       const seg: Segment = { id: newSegmentId(), start: a, end: b };
       let createdId: string | null = seg.id;
-      setSegments((prev) => {
+      commit((prev) => {
         const merged = mergeSegments([...prev, seg]);
-        // Find which merged segment now contains the inserted span; use its id.
         const containing = merged.find((m) => m.start <= a && m.end >= b);
         if (containing) createdId = containing.id;
         return merged;
       });
       return createdId;
     },
-    [duration]
+    [duration, commit]
   );
 
-  const deleteSegments = useCallback((ids: Set<string>) => {
-    setSegments((prev) => prev.filter((s) => !ids.has(s.id)));
-  }, []);
+  const deleteSegments = useCallback(
+    (ids: Set<string>) => {
+      commit((prev) => prev.filter((s) => !ids.has(s.id)));
+    },
+    [commit]
+  );
 
+  /** Continuous resize from a drag — use after beginEdit. Does not push history. */
   const resizeEdge = useCallback(
     (id: string, edge: 'start' | 'end', newValue: number) => {
-      setSegments((prev) => resizeSegmentEdge(prev, id, edge, newValue, duration));
+      updateWithoutHistory((prev) => resizeSegmentEdge(prev, id, edge, newValue, duration));
     },
-    [duration]
+    [duration, updateWithoutHistory]
   );
 
   const invert = useCallback(() => {
-    setSegments((prev) => invertSegments(prev, duration));
-  }, [duration]);
+    commit((prev) => invertSegments(prev, duration));
+  }, [duration, commit]);
 
   const setPendingInPoint = useCallback((t: number | null) => setPendingIn(t), []);
 
-  /** Commit pending in-point with current time as the out-point. */
   const commitOutPoint = useCallback(
     (currentTime: number) => {
       if (pendingIn == null) return null;
@@ -63,7 +136,7 @@ export function useSegments(duration: number) {
   );
 
   const reset = useCallback(() => {
-    setSegments([]);
+    setHist(empty);
     setPendingIn(null);
   }, []);
 
@@ -71,12 +144,17 @@ export function useSegments(duration: number) {
     segments,
     sortedSegments: sortSegments(segments),
     pendingIn,
+    canUndo: hist.past.length > 0,
+    canRedo: hist.future.length > 0,
     setPendingInPoint,
     addSegment,
     deleteSegments,
     resizeEdge,
+    beginEdit,
     invert,
     commitOutPoint,
+    undo,
+    redo,
     reset
   };
 }

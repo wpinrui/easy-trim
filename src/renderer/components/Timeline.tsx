@@ -11,6 +11,7 @@ type Props = {
   pendingIn: number | null;
   onSeek: (time: number) => void;
   onCreateSegment: (start: number, end: number) => void;
+  onBeginEdit: () => void;
   onResizeEdge: (id: string, edge: 'start' | 'end', newValue: number) => void;
   onSegmentClick: (id: string, modifiers: { ctrl: boolean; shift: boolean }) => void;
   onClearSelection: () => void;
@@ -41,6 +42,7 @@ export function Timeline({
   pendingIn,
   onSeek,
   onCreateSegment,
+  onBeginEdit,
   onResizeEdge,
   onSegmentClick,
   onClearSelection
@@ -147,6 +149,7 @@ export function Timeline({
     const edge = findEdgeUnderCursor(e.clientX);
     if (edge) {
       e.preventDefault();
+      onBeginEdit();
       setDrag({ kind: 'edge', id: edge.id, edge: edge.edge });
       return;
     }
