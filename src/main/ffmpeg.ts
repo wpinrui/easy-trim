@@ -213,7 +213,7 @@ export function registerFfmpegHandlers() {
       // Phase 2: concat via concat demuxer with a list file (avoids | fragility).
       emitProgress(win, { percent: 92, stage: 'concatenating' });
       const listFile = path.join(tempDir, 'concat.txt');
-      const listContent = tsFiles.map((f) => `file '${f}'`).join('\n');
+      const listContent = tsFiles.map((f) => `file '${f.replace(/'/g, "\\'")}'`).join('\n');
       await fs.writeFile(listFile, listContent, 'utf8');
       const concatArgs = [
         '-hide_banner',
@@ -242,6 +242,7 @@ export function registerFfmpegHandlers() {
       const message = err instanceof Error ? err.message : String(err);
       return { ok: false, error: message };
     } finally {
+      currentCtx = null;
       await rimraf(tempDir);
     }
   });
