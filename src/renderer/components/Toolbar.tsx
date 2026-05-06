@@ -2,15 +2,18 @@ import { Toolbar, ToolbarButton, ToolbarDivider, Tooltip } from '@fluentui/react
 import {
   FolderOpen24Regular,
   ArrowSwap24Regular,
-  Save24Regular
+  Save24Regular,
+  ArrowRotateClockwise24Regular
 } from '@fluentui/react-icons';
 
 type Props = {
   onOpen: () => void;
   onInvert: () => void;
   onExport: () => void;
+  onRotate: () => void;
   videoLoaded: boolean;
   segmentCount: number;
+  rotation: 0 | 90 | 180 | 270;
   fileName: string | null;
 };
 
@@ -18,8 +21,10 @@ export function AppToolbar({
   onOpen,
   onInvert,
   onExport,
+  onRotate,
   videoLoaded,
   segmentCount,
+  rotation,
   fileName
 }: Props) {
   return (
@@ -50,6 +55,16 @@ export function AppToolbar({
           disabled={!videoLoaded}
         >
           Invert
+        </ToolbarButton>
+      </Tooltip>
+      <Tooltip content={`Rotate 90° clockwise (R) — current: ${rotation}°`} relationship="label">
+        <ToolbarButton
+          appearance="subtle"
+          icon={<ArrowRotateClockwise24Regular />}
+          onClick={onRotate}
+          disabled={!videoLoaded}
+        >
+          Rotate
         </ToolbarButton>
       </Tooltip>
       <Tooltip content="Export selected segments… (Ctrl+E)" relationship="label">

@@ -150,6 +150,15 @@ export function registerFfmpegHandlers() {
           segmentCount: segs.length
         });
 
+        const transposeFilter: string[] =
+          req.rotation === 90
+            ? ['-vf', 'transpose=1']
+            : req.rotation === 180
+              ? ['-vf', 'transpose=1,transpose=1']
+              : req.rotation === 270
+                ? ['-vf', 'transpose=2']
+                : [];
+
         const args = [
           '-hide_banner',
           '-loglevel',
@@ -162,6 +171,7 @@ export function registerFfmpegHandlers() {
           String(seg.end),
           '-i',
           req.inputPath,
+          ...transposeFilter,
           '-c:v',
           'libx264',
           '-crf',

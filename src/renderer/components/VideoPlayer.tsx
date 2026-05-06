@@ -24,6 +24,7 @@ type Props = {
   speed: number;
   setSpeed: (s: number) => void;
   muted: boolean;
+  rotation: 0 | 90 | 180 | 270;
   onToggleMute: () => void;
   onPlayForward: () => void;
   onPlayBackward: () => void;
@@ -43,6 +44,7 @@ export function VideoPlayer({
   speed,
   setSpeed,
   muted,
+  rotation,
   onToggleMute,
   onPlayForward,
   onPlayBackward,
@@ -66,14 +68,20 @@ export function VideoPlayer({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#000'
+          background: '#000',
+          overflow: 'hidden'
         }}
       >
         {src ? (
           <video
             ref={videoRef}
             src={src}
-            style={{ maxHeight: '100%', maxWidth: '100%' }}
+            style={{
+              maxHeight: '100%',
+              maxWidth: '100%',
+              transform: `rotate(${rotation}deg)`,
+              transition: 'transform 0.15s ease'
+            }}
             controls={false}
             preload="metadata"
             onClick={() => (isPlaying ? onPause() : onPlayForward())}

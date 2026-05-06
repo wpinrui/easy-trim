@@ -67,7 +67,8 @@ export function App() {
       const res = await window.api.exportSegments({
         inputPath: videoPath,
         segments: segs.segments.map((s) => ({ start: s.start, end: s.end })),
-        outputPath: outPath
+        outputPath: outPath,
+        rotation: segs.rotation
       });
       if (res.ok) {
         setExportResult({ ok: true, message: 'Export complete', outPath: res.outPath });
@@ -162,6 +163,11 @@ export function App() {
           e.preventDefault();
           segs.commitOutPoint(player.currentTime);
           break;
+        case 'r':
+        case 'R':
+          e.preventDefault();
+          segs.rotate();
+          break;
         case 'f':
         case 'F':
           e.preventDefault();
@@ -226,8 +232,10 @@ export function App() {
         onOpen={handleOpen}
         onInvert={handleInvert}
         onExport={startExport}
+        onRotate={segs.rotate}
         videoLoaded={!!videoSrc}
         segmentCount={segs.segments.length}
+        rotation={segs.rotation}
         fileName={fileName}
       />
 
@@ -251,6 +259,7 @@ export function App() {
           speed={player.speed}
           setSpeed={player.setSpeed}
           muted={player.muted}
+          rotation={segs.rotation}
           onToggleMute={player.toggleMute}
           onPlayForward={player.playForward}
           onPlayBackward={player.playBackward}

@@ -14,6 +14,7 @@ export type ExportRequest = {
   inputPath: string;
   segments: Array<{ start: number; end: number }>;
   outputPath: string;
+  rotation?: 0 | 90 | 180 | 270;
 };
 
 export type ExportProgress = {

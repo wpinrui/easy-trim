@@ -10,15 +10,21 @@ import {
 
 const HISTORY_LIMIT = 100;
 
-type History = {
-  past: Segment[][];
-  present: Segment[];
-  future: Segment[][];
+type EditorState = {
+  segments: Segment[];
+  rotation: 0 | 90 | 180 | 270;
 };
 
-const empty: History = { past: [], present: [], future: [] };
+type History = {
+  past: EditorState[];
+  present: EditorState;
+  future: EditorState[];
+};
 
-function pushPast(past: Segment[][], snapshot: Segment[]): Segment[][] {
+const emptyState: EditorState = { segments: [], rotation: 0 };
+const empty: History = { past: [], present: emptyState, future: [] };
+
+function pushPast(past: EditorState[], snapshot: EditorState): EditorState[] {
   const next = [...past, snapshot];
   if (next.length > HISTORY_LIMIT) next.shift();
   return next;
@@ -28,10 +34,11 @@ export function useSegments(duration: number) {
   const [hist, setHist] = useState<History>(empty);
   const [pendingIn, setPendingIn] = useState<number | null>(null);
 
-  const segments = hist.present;
+  const segments = hist.present.segments;
+  const rotation = hist.present.rotation;
 
   /** Apply an update and record the previous state in history. */
-  const commit = useCallback((updater: (prev: Segment[]) => Segment[]) => {
+  const commit = useCallback((updater: (prev: EditorState) => EditorState) => {
     setHist((prev) => {
       const next = updater(prev.present);
       if (next === prev.present) return prev;
@@ -53,7 +60,7 @@ export function useSegments(duration: number) {
   }, []);
 
   /** Update without recording history (use after beginEdit during a drag). */
-  const updateWithoutHistory = useCallback((updater: (prev: Segment[]) => Segment[]) => {
+  const updateWithoutHistory = useCallback((updater: (prev: EditorState) => EditorState) => {
     setHist((prev) => ({ ...prev, present: updater(prev.present) }));
   }, []);
 
@@ -92,10 +99,10 @@ export function useSegments(duration: number) {
       const seg: Segment = { id: newSegmentId(), start: a, end: b };
       let createdId: string | null = seg.id;
       commit((prev) => {
-        const merged = mergeSegments([...prev, seg]);
+        const merged = mergeSegments([...prev.segments, seg]);
         const containing = merged.find((m) => m.start <= a && m.end >= b);
         if (containing) createdId = containing.id;
-        return merged;
+        return { ...prev, segments: merged };
       });
       return createdId;
     },
@@ -104,7 +111,7 @@ export function useSegments(duration: number) {
 
   const deleteSegments = useCallback(
     (ids: Set<string>) => {
-      commit((prev) => prev.filter((s) => !ids.has(s.id)));
+      commit((prev) => ({ ...prev, segments: prev.segments.filter((s) => !ids.has(s.id)) }));
     },
     [commit]
   );
@@ -112,14 +119,21 @@ export function useSegments(duration: number) {
   /** Continuous resize from a drag — use after beginEdit. Does not push history. */
   const resizeEdge = useCallback(
     (id: string, edge: 'start' | 'end', newValue: number) => {
-      updateWithoutHistory((prev) => resizeSegmentEdge(prev, id, edge, newValue, duration));
+      updateWithoutHistory((prev) => ({
+        ...prev,
+        segments: resizeSegmentEdge(prev.segments, id, edge, newValue, duration)
+      }));
     },
     [duration, updateWithoutHistory]
   );
 
   const invert = useCallback(() => {
-    commit((prev) => invertSegments(prev, duration));
+    commit((prev) => ({ ...prev, segments: invertSegments(prev.segments, duration) }));
   }, [duration, commit]);
+
+  const rotate = useCallback(() => {
+    commit((prev) => ({ ...prev, rotation: ((prev.rotation + 90) % 360) as 0 | 90 | 180 | 270 }));
+  }, [commit]);
 
   const setPendingInPoint = useCallback((t: number | null) => setPendingIn(t), []);
 
@@ -143,6 +157,7 @@ export function useSegments(duration: number) {
   return {
     segments,
     sortedSegments: sortSegments(segments),
+    rotation,
     pendingIn,
     canUndo: hist.past.length > 0,
     canRedo: hist.future.length > 0,
@@ -152,6 +167,7 @@ export function useSegments(duration: number) {
     resizeEdge,
     beginEdit,
     invert,
+    rotate,
     commitOutPoint,
     undo,
     redo,
