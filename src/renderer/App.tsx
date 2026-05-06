@@ -117,6 +117,17 @@ export function App() {
           sel.selectAll();
           return;
         }
+        if (e.key === 'z' || e.key === 'Z') {
+          e.preventDefault();
+          if (e.shiftKey) segs.redo();
+          else segs.undo();
+          return;
+        }
+        if (e.key === 'y' || e.key === 'Y') {
+          e.preventDefault();
+          segs.redo();
+          return;
+        }
         return;
       }
 
@@ -197,6 +208,11 @@ export function App() {
 
   const selectedTotalSec = totalSelectedDuration(segs.segments, sel.selected);
 
+  // Push dirty state to main so it can warn on quit.
+  useEffect(() => {
+    window.api.setDirty(segs.segments.length > 0);
+  }, [segs.segments.length]);
+
   return (
     <div
       style={{
@@ -249,6 +265,7 @@ export function App() {
           pendingIn={segs.pendingIn}
           onSeek={player.seek}
           onCreateSegment={(a, b) => segs.addSegment(a, b)}
+          onBeginEdit={segs.beginEdit}
           onResizeEdge={segs.resizeEdge}
           onSegmentClick={handleSegmentClick}
           onClearSelection={sel.clear}

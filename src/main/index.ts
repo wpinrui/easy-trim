@@ -7,6 +7,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDev = !app.isPackaged;
 
+// Dirty flag set by the renderer whenever it has unsaved segments.
+let isDirty = false;
+let allowClose = false;
+
+ipcMain.on('set-dirty', (_event, dirty: boolean) => {
+  isDirty = !!dirty;
+});
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
@@ -33,6 +41,25 @@ function createWindow(): BrowserWindow {
   win.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url);
     return { action: 'deny' };
+  });
+
+  win.on('close', (e) => {
+    if (allowClose || !isDirty) return;
+    e.preventDefault();
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['Quit anyway', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Easy Trim',
+      message: 'You have unsaved segments.',
+      detail: 'Quitting now will discard them. Continue?',
+      noLink: true
+    });
+    if (choice === 0) {
+      allowClose = true;
+      win.close();
+    }
   });
 
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {

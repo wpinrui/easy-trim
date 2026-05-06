@@ -31,4 +31,5 @@ export type Api = {
   exportSegments: (req: ExportRequest) => Promise<ExportResult>;
   onExportProgress: (cb: (p: ExportProgress) => void) => () => void;
   cancelExport: () => Promise<void>;
+  setDirty: (dirty: boolean) => void;
 };

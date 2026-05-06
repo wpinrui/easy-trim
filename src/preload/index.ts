@@ -11,7 +11,8 @@ const api: Api = {
     ipcRenderer.on('export-progress', listener);
     return () => ipcRenderer.removeListener('export-progress', listener);
   },
-  cancelExport: () => ipcRenderer.invoke('cancel-export')
+  cancelExport: () => ipcRenderer.invoke('cancel-export'),
+  setDirty: (dirty: boolean) => ipcRenderer.send('set-dirty', dirty)
 };
 
 contextBridge.exposeInMainWorld('api', api);
