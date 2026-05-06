@@ -1,0 +1,23 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  background: #202020;
+  color: #f3f3f3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font-family: inherit;
+}
+
+::selection {
+  background: rgba(96, 205, 255, 0.4);
+}
