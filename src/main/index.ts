@@ -20,7 +20,11 @@ function createWindow(): BrowserWindow {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // Allow <video> to load `file:///` URLs of user-picked local media.
+      // Same approach used in the chopchop editor; safe here because the renderer
+      // only loads bundled HTML/JS plus user-chosen media (no remote content).
+      webSecurity: false
     }
   });
 
@@ -52,7 +56,7 @@ ipcMain.handle('open-video', async (event) => {
   const filePath = result.filePaths[0];
   return {
     path: filePath,
-    url: `file://${filePath.replace(/\\/g, '/')}`,
+    url: `file:///${filePath.replace(/\\/g, '/')}`,
     name: path.basename(filePath)
   };
 });
