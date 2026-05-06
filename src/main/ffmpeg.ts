@@ -18,28 +18,31 @@ function resolveFfmpegPath(): string {
   return ffmpegPath;
 }
 
-let activeProcess: ChildProcessWithoutNullStreams | null = null;
-let cancelled = false;
+interface RunCtx {
+  cancelled: boolean;
+  activeProcess: ChildProcessWithoutNullStreams | null;
+}
+let currentCtx: RunCtx | null = null;
 
 function emitProgress(win: BrowserWindow | null, p: ExportProgress) {
   win?.webContents.send('export-progress', p);
 }
 
-function spawnFfmpeg(args: string[]): Promise<{ stderr: string }> {
+function spawnFfmpeg(ctx: RunCtx, args: string[]): Promise<{ stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(resolveFfmpegPath(), args, { windowsHide: true });
-    activeProcess = proc;
+    ctx.activeProcess = proc;
     let stderr = '';
     proc.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
     proc.on('error', (err) => {
-      activeProcess = null;
+      ctx.activeProcess = null;
       reject(err);
     });
     proc.on('close', (code) => {
-      activeProcess = null;
-      if (cancelled) {
+      ctx.activeProcess = null;
+      if (ctx.cancelled) {
         reject(new Error('cancelled'));
       } else if (code === 0) {
         resolve({ stderr });
@@ -51,13 +54,14 @@ function spawnFfmpeg(args: string[]): Promise<{ stderr: string }> {
 }
 
 function spawnFfmpegWithProgress(
+  ctx: RunCtx,
   args: string[],
   totalDurationSec: number,
   onProgress: (fractionOfThisRun: number) => void
 ): Promise<{ stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(resolveFfmpegPath(), args, { windowsHide: true });
-    activeProcess = proc;
+    ctx.activeProcess = proc;
     let stderr = '';
     let stdoutBuf = '';
     proc.stdout.on('data', (chunk) => {
@@ -77,12 +81,12 @@ function spawnFfmpegWithProgress(
       stderr += chunk.toString();
     });
     proc.on('error', (err) => {
-      activeProcess = null;
+      ctx.activeProcess = null;
       reject(err);
     });
     proc.on('close', (code) => {
-      activeProcess = null;
-      if (cancelled) {
+      ctx.activeProcess = null;
+      if (ctx.cancelled) {
         reject(new Error('cancelled'));
       } else if (code === 0) {
         resolve({ stderr });
@@ -123,7 +127,8 @@ function mergeSegments(
 export function registerFfmpegHandlers() {
   ipcMain.handle('export-segments', async (event, req: ExportRequest): Promise<ExportResult> => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    cancelled = false;
+    const ctx: RunCtx = { cancelled: false, activeProcess: null };
+    currentCtx = ctx;
 
     const segs = mergeSegments(req.segments);
     if (segs.length === 0) {
@@ -193,7 +198,7 @@ export function registerFfmpegHandlers() {
         ];
 
         const startElapsed = elapsed;
-        await spawnFfmpegWithProgress(args, segDur, (f) => {
+        await spawnFfmpegWithProgress(ctx, args, segDur, (f) => {
           const overall = ((startElapsed + f * segDur) / totalDuration) * 90;
           emitProgress(win, {
             percent: overall,
@@ -205,15 +210,21 @@ export function registerFfmpegHandlers() {
         elapsed += segDur;
       }
 
-      // Phase 2: concat via concat protocol with stream copy.
+      // Phase 2: concat via concat demuxer with a list file (avoids | fragility).
       emitProgress(win, { percent: 92, stage: 'concatenating' });
-      const concatInput = `concat:${tsFiles.join('|')}`;
+      const listFile = path.join(tempDir, 'concat.txt');
+      const listContent = tsFiles.map((f) => `file '${f}'`).join('\n');
+      await fs.writeFile(listFile, listContent, 'utf8');
       const concatArgs = [
         '-hide_banner',
         '-loglevel',
         'error',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
         '-i',
-        concatInput,
+        listFile,
         '-c',
         'copy',
         '-bsf:a',
@@ -223,7 +234,7 @@ export function registerFfmpegHandlers() {
         '-y',
         req.outputPath
       ];
-      await spawnFfmpeg(concatArgs);
+      await spawnFfmpeg(ctx, concatArgs);
 
       emitProgress(win, { percent: 100, stage: 'finalizing' });
       return { ok: true, outPath: req.outputPath };
@@ -236,9 +247,11 @@ export function registerFfmpegHandlers() {
   });
 
   ipcMain.handle('cancel-export', async () => {
-    cancelled = true;
-    if (activeProcess && !activeProcess.killed) {
-      activeProcess.kill('SIGKILL');
+    if (currentCtx) {
+      currentCtx.cancelled = true;
+      if (currentCtx.activeProcess && !currentCtx.activeProcess.killed) {
+        currentCtx.activeProcess.kill('SIGKILL');
+      }
     }
   });
 }
