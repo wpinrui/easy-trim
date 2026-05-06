@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { registerFfmpegHandlers } from './ffmpeg';
 
@@ -83,7 +83,7 @@ ipcMain.handle('open-video', async (event) => {
   const filePath = result.filePaths[0];
   return {
     path: filePath,
-    url: `file:///${filePath.replace(/\\/g, '/')}`,
+    url: pathToFileURL(filePath).href,
     name: path.basename(filePath)
   };
 });
