@@ -83,7 +83,7 @@ export function App() {
     } finally {
       off();
     }
-  }, [videoPath, segs.segments, fileName]);
+  }, [videoPath, segs.segments, segs.rotation, fileName]);
 
   const cancelExport = useCallback(async () => {
     await window.api.cancelExport();
