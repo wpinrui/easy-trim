@@ -19,11 +19,18 @@ type Props = {
 const EDGE_HIT_PX = 6;
 const TRACK_HEIGHT = 64;
 const SCRUBBER_HEIGHT = 28;
+const SCROLLBAR_HEIGHT = 8;
+const MIN_VIEW_LEN = 0.25; // seconds — limits max zoom
+const ZOOM_FACTOR = 1.2;
+
+type View = { start: number; end: number };
 
 type Drag =
   | { kind: 'create'; startX: number; currentX: number }
   | { kind: 'edge'; id: string; edge: 'start' | 'end' }
   | { kind: 'scrub' }
+  | { kind: 'pan'; startX: number; startView: View }
+  | { kind: 'scrollbar-thumb'; startX: number; startView: View }
   | null;
 
 export function Timeline({
@@ -38,20 +45,38 @@ export function Timeline({
   onSegmentClick,
   onClearSelection
 }: Props) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const scrubberRef = useRef<HTMLDivElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
+  const scrollbarRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<Drag>(null);
+  const [view, setView] = useState<View>({ start: 0, end: 0 });
   const sorted = useMemo(() => sortSegments(segments), [segments]);
+
+  // Reset view when a new video loads (duration changes from previous).
+  const lastDurationRef = useRef(0);
+  useEffect(() => {
+    if (duration !== lastDurationRef.current) {
+      lastDurationRef.current = duration;
+      setView({ start: 0, end: duration });
+    }
+  }, [duration]);
+
+  const viewLen = Math.max(MIN_VIEW_LEN, view.end - view.start);
 
   const xToTimeOnElement = (clientX: number, el: HTMLElement | null): number => {
     if (!el) return 0;
     const rect = el.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return ratio * duration;
+    return view.start + ratio * viewLen;
   };
   const xToTime = (clientX: number) => xToTimeOnElement(clientX, trackRef.current);
-  const timeToPct = (t: number): number =>
-    duration <= 0 ? 0 : Math.max(0, Math.min(100, (t / duration) * 100));
+
+  // Position percentage within the visible window.
+  const timeToPct = (t: number): number => {
+    if (viewLen <= 0) return 0;
+    return ((t - view.start) / viewLen) * 100;
+  };
 
   const findEdgeUnderCursor = (
     clientX: number
@@ -60,8 +85,8 @@ export function Timeline({
     if (!rect) return null;
     const x = clientX - rect.left;
     for (const s of sorted) {
-      const xs = (s.start / duration) * rect.width;
-      const xe = (s.end / duration) * rect.width;
+      const xs = ((s.start - view.start) / viewLen) * rect.width;
+      const xe = ((s.end - view.start) / viewLen) * rect.width;
       if (Math.abs(x - xs) <= EDGE_HIT_PX) return { id: s.id, edge: 'start' };
       if (Math.abs(x - xe) <= EDGE_HIT_PX) return { id: s.id, edge: 'end' };
     }
@@ -73,23 +98,52 @@ export function Timeline({
     if (!rect) return null;
     const x = clientX - rect.left;
     for (const s of sorted) {
-      const xs = (s.start / duration) * rect.width;
-      const xe = (s.end / duration) * rect.width;
+      const xs = ((s.start - view.start) / viewLen) * rect.width;
+      const xe = ((s.end - view.start) / viewLen) * rect.width;
       if (x >= xs + EDGE_HIT_PX && x <= xe - EDGE_HIT_PX) return s;
       if (xe - xs < EDGE_HIT_PX * 2 && x >= xs && x <= xe) return s;
     }
     return null;
   };
 
+  const clampView = (start: number, end: number): View => {
+    const len = Math.max(MIN_VIEW_LEN, Math.min(duration || end - start, end - start));
+    let s = start;
+    let e = s + len;
+    if (s < 0) {
+      s = 0;
+      e = len;
+    }
+    if (duration > 0 && e > duration) {
+      e = duration;
+      s = Math.max(0, e - len);
+    }
+    return { start: s, end: e };
+  };
+
   const onScrubberMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0 || duration <= 0) return;
+    if (duration <= 0) return;
+    if (e.button === 2) {
+      // Right-click: start pan
+      e.preventDefault();
+      setDrag({ kind: 'pan', startX: e.clientX, startView: view });
+      return;
+    }
+    if (e.button !== 0) return;
     e.preventDefault();
     onSeek(xToTimeOnElement(e.clientX, scrubberRef.current));
     setDrag({ kind: 'scrub' });
   };
 
   const onTrackMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0 || duration <= 0) return;
+    if (duration <= 0) return;
+    if (e.button === 2) {
+      // Right-click: start pan
+      e.preventDefault();
+      setDrag({ kind: 'pan', startX: e.clientX, startView: view });
+      return;
+    }
+    if (e.button !== 0) return;
     const edge = findEdgeUnderCursor(e.clientX);
     if (edge) {
       e.preventDefault();
@@ -115,6 +169,18 @@ export function Timeline({
         setDrag({ ...drag, currentX: e.clientX });
       } else if (drag.kind === 'scrub') {
         onSeek(xToTimeOnElement(e.clientX, scrubberRef.current));
+      } else if (drag.kind === 'pan') {
+        const rect = trackRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const dx = e.clientX - drag.startX;
+        const dt = (dx / rect.width) * (drag.startView.end - drag.startView.start);
+        setView(clampView(drag.startView.start - dt, drag.startView.end - dt));
+      } else if (drag.kind === 'scrollbar-thumb') {
+        const rect = scrollbarRef.current?.getBoundingClientRect();
+        if (!rect || duration <= 0) return;
+        const dx = e.clientX - drag.startX;
+        const dt = (dx / rect.width) * duration;
+        setView(clampView(drag.startView.start + dt, drag.startView.end + dt));
       }
     };
     const onUp = (e: MouseEvent) => {
@@ -125,7 +191,6 @@ export function Timeline({
           const b = xToTime(e.clientX);
           onCreateSegment(Math.min(a, b), Math.max(a, b));
         } else {
-          // Click on empty area without drag: clear selection.
           onClearSelection();
         }
       }
@@ -140,7 +205,31 @@ export function Timeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag]);
 
-  // Track-row hover cursor (no scrub here — that lives on the scrubber).
+  // Ctrl+wheel zoom anchored on the playhead.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey || duration <= 0) return;
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
+      const currentLen = view.end - view.start;
+      let newLen = currentLen * factor;
+      newLen = Math.max(MIN_VIEW_LEN, Math.min(duration, newLen));
+      const anchor = currentTime;
+      // Keep `anchor` at the same screen ratio it currently occupies.
+      const ratio = currentLen > 0 ? (anchor - view.start) / currentLen : 0.5;
+      const newStart = anchor - ratio * newLen;
+      const newEnd = newStart + newLen;
+      setView(clampView(newStart, newEnd));
+    };
+    root.addEventListener('wheel', onWheel, { passive: false });
+    return () => root.removeEventListener('wheel', onWheel);
+    // clampView is defined inline; only inputs that matter here are view, currentTime, duration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, currentTime, duration]);
+
+  // Track-row hover cursor.
   const [hoverCursor, setHoverCursor] = useState<string>('default');
   const onTrackHoverMove = (e: React.MouseEvent) => {
     if (drag) return;
@@ -150,15 +239,16 @@ export function Timeline({
   };
 
   const ticks = useMemo(() => {
-    if (duration <= 0) return [];
+    if (duration <= 0 || viewLen <= 0) return [];
     const target = 8;
-    const niceSteps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600];
-    const ideal = duration / target;
+    const niceSteps = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600];
+    const ideal = viewLen / target;
     const step = niceSteps.find((s) => s >= ideal) ?? niceSteps[niceSteps.length - 1];
     const arr: number[] = [];
-    for (let t = 0; t <= duration + 1e-6; t += step) arr.push(t);
+    const first = Math.ceil(view.start / step) * step;
+    for (let t = first; t <= view.end + 1e-6; t += step) arr.push(t);
     return arr;
-  }, [duration]);
+  }, [duration, view.start, view.end, viewLen]);
 
   let createPreview: { start: number; end: number } | null = null;
   if (drag?.kind === 'create') {
@@ -167,20 +257,43 @@ export function Timeline({
     createPreview = { start: Math.min(a, b), end: Math.max(a, b) };
   }
 
-  const totalHeight = SCRUBBER_HEIGHT + TRACK_HEIGHT;
+  // Scrollbar metrics
+  const scrollbarThumbStartPct =
+    duration > 0 ? Math.max(0, Math.min(100, (view.start / duration) * 100)) : 0;
+  const scrollbarThumbWidthPct =
+    duration > 0 ? Math.max(2, Math.min(100, (viewLen / duration) * 100)) : 100;
+
+  const onScrollbarTrackMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0 || duration <= 0) return;
+    const rect = scrollbarRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const target = e.target as HTMLElement;
+    if (target.dataset['role'] === 'thumb') {
+      e.preventDefault();
+      setDrag({ kind: 'scrollbar-thumb', startX: e.clientX, startView: view });
+      return;
+    }
+    // Click on bare track: jump so the thumb centers on click.
+    const ratio = (e.clientX - rect.left) / rect.width;
+    const targetCenter = ratio * duration;
+    const newStart = targetCenter - viewLen / 2;
+    setView(clampView(newStart, newStart + viewLen));
+  };
 
   return (
     <div
+      ref={rootRef}
       style={{
         position: 'relative',
-        height: totalHeight,
+        height: SCRUBBER_HEIGHT + TRACK_HEIGHT + SCROLLBAR_HEIGHT,
         background: '#1f1f1f',
         borderTop: '1px solid #3a3a3a',
-        userSelect: 'none'
+        userSelect: 'none',
+        overflow: 'hidden'
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* Scrubber row: click + drag anywhere to seek */}
+      {/* Scrubber row */}
       <div
         ref={scrubberRef}
         onMouseDown={onScrubberMouseDown}
@@ -189,11 +302,19 @@ export function Timeline({
           height: SCRUBBER_HEIGHT,
           background: '#272727',
           borderBottom: '1px solid #303030',
-          cursor: duration > 0 ? (drag?.kind === 'scrub' ? 'grabbing' : 'pointer') : 'default',
+          cursor:
+            drag?.kind === 'scrub'
+              ? 'grabbing'
+              : drag?.kind === 'pan'
+                ? 'grabbing'
+                : duration > 0
+                  ? 'pointer'
+                  : 'default',
           fontSize: 10,
-          color: '#888'
+          color: '#888',
+          overflow: 'hidden'
         }}
-        title="Click or drag to scrub"
+        title="Click/drag = scrub · Right-click drag = pan · Ctrl+scroll = zoom"
       >
         {ticks.map((t) => (
           <div
@@ -211,7 +332,6 @@ export function Timeline({
             {formatDuration(t)}
           </div>
         ))}
-        {/* Filled progress region from 0 → currentTime to make the scrubber readable */}
         {duration > 0 && (
           <div
             style={{
@@ -235,11 +355,20 @@ export function Timeline({
         style={{
           position: 'relative',
           height: TRACK_HEIGHT,
-          cursor: drag?.kind === 'edge' ? 'ew-resize' : hoverCursor
+          overflow: 'hidden',
+          cursor:
+            drag?.kind === 'edge'
+              ? 'ew-resize'
+              : drag?.kind === 'pan'
+                ? 'grabbing'
+                : hoverCursor
         }}
       >
         {sorted.map((s) => {
           const isSelected = selected.has(s.id);
+          const leftPct = timeToPct(s.start);
+          const rightPct = timeToPct(s.end);
+          if (rightPct < 0 || leftPct > 100) return null;
           return (
             <div
               key={s.id}
@@ -248,8 +377,8 @@ export function Timeline({
                 position: 'absolute',
                 top: 8,
                 bottom: 8,
-                left: `${timeToPct(s.start)}%`,
-                width: `${timeToPct(s.end) - timeToPct(s.start)}%`,
+                left: `${leftPct}%`,
+                width: `${rightPct - leftPct}%`,
                 background: isSelected
                   ? 'rgba(96, 205, 255, 0.55)'
                   : 'rgba(96, 205, 255, 0.28)',
@@ -309,21 +438,21 @@ export function Timeline({
         )}
       </div>
 
-      {/* Playhead spans both rows */}
+      {/* Playhead spans scrubber + track rows (not the scrollbar) */}
       {duration > 0 && (
         <div
           style={{
             position: 'absolute',
             top: 0,
-            bottom: 0,
+            height: SCRUBBER_HEIGHT + TRACK_HEIGHT,
             left: `${timeToPct(currentTime)}%`,
             width: 2,
             background: '#ff4d4d',
             pointerEvents: 'none',
-            transform: 'translateX(-1px)'
+            transform: 'translateX(-1px)',
+            display: timeToPct(currentTime) < 0 || timeToPct(currentTime) > 100 ? 'none' : 'block'
           }}
         >
-          {/* Playhead "head" handle on the scrubber row */}
           <div
             style={{
               position: 'absolute',
@@ -338,6 +467,45 @@ export function Timeline({
           />
         </div>
       )}
+
+      {/* Stylish thin scrollbar */}
+      <div
+        ref={scrollbarRef}
+        onMouseDown={onScrollbarTrackMouseDown}
+        style={{
+          position: 'relative',
+          height: SCROLLBAR_HEIGHT,
+          background: '#181818',
+          borderTop: '1px solid #2a2a2a',
+          cursor: duration > 0 ? 'pointer' : 'default'
+        }}
+      >
+        {duration > 0 && (
+          <div
+            data-role="thumb"
+            style={{
+              position: 'absolute',
+              top: 1,
+              bottom: 1,
+              left: `${scrollbarThumbStartPct}%`,
+              width: `${scrollbarThumbWidthPct}%`,
+              minWidth: 10,
+              background: drag?.kind === 'scrollbar-thumb' ? '#7aa6c8' : '#4a4a4a',
+              borderRadius: 3,
+              cursor: 'grab',
+              transition: drag?.kind === 'scrollbar-thumb' ? 'none' : 'background 120ms'
+            }}
+            onMouseEnter={(e) => {
+              if (drag?.kind !== 'scrollbar-thumb')
+                (e.currentTarget as HTMLDivElement).style.background = '#5a5a5a';
+            }}
+            onMouseLeave={(e) => {
+              if (drag?.kind !== 'scrollbar-thumb')
+                (e.currentTarget as HTMLDivElement).style.background = '#4a4a4a';
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }
