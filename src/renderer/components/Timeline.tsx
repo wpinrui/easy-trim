@@ -17,8 +17,8 @@ type Props = {
 };
 
 const EDGE_HIT_PX = 6;
-const TIMELINE_HEIGHT = 64;
-const RULER_HEIGHT = 18;
+const TRACK_HEIGHT = 64;
+const SCRUBBER_HEIGHT = 28;
 
 type Drag =
   | { kind: 'create'; startX: number; currentX: number }
@@ -38,23 +38,25 @@ export function Timeline({
   onSegmentClick,
   onClearSelection
 }: Props) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const scrubberRef = useRef<HTMLDivElement | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<Drag>(null);
   const sorted = useMemo(() => sortSegments(segments), [segments]);
 
-  const xToTime = (clientX: number): number => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return 0;
+  const xToTimeOnElement = (clientX: number, el: HTMLElement | null): number => {
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     return ratio * duration;
   };
+  const xToTime = (clientX: number) => xToTimeOnElement(clientX, trackRef.current);
   const timeToPct = (t: number): number =>
     duration <= 0 ? 0 : Math.max(0, Math.min(100, (t / duration) * 100));
 
   const findEdgeUnderCursor = (
     clientX: number
   ): { id: string; edge: 'start' | 'end' } | null => {
-    const rect = containerRef.current?.getBoundingClientRect();
+    const rect = trackRef.current?.getBoundingClientRect();
     if (!rect) return null;
     const x = clientX - rect.left;
     for (const s of sorted) {
@@ -67,20 +69,26 @@ export function Timeline({
   };
 
   const findSegmentUnderCursor = (clientX: number): Segment | null => {
-    const rect = containerRef.current?.getBoundingClientRect();
+    const rect = trackRef.current?.getBoundingClientRect();
     if (!rect) return null;
     const x = clientX - rect.left;
     for (const s of sorted) {
       const xs = (s.start / duration) * rect.width;
       const xe = (s.end / duration) * rect.width;
       if (x >= xs + EDGE_HIT_PX && x <= xe - EDGE_HIT_PX) return s;
-      // For very narrow segments, fall back to whole-body hit.
       if (xe - xs < EDGE_HIT_PX * 2 && x >= xs && x <= xe) return s;
     }
     return null;
   };
 
-  const onMouseDown = (e: React.MouseEvent) => {
+  const onScrubberMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0 || duration <= 0) return;
+    e.preventDefault();
+    onSeek(xToTimeOnElement(e.clientX, scrubberRef.current));
+    setDrag({ kind: 'scrub' });
+  };
+
+  const onTrackMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0 || duration <= 0) return;
     const edge = findEdgeUnderCursor(e.clientX);
     if (edge) {
@@ -94,7 +102,6 @@ export function Timeline({
       onSegmentClick(seg.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
       return;
     }
-    // Empty area: prepare a potential create-drag, but only commit if user actually drags.
     setDrag({ kind: 'create', startX: e.clientX, currentX: e.clientX });
   };
 
@@ -103,12 +110,11 @@ export function Timeline({
     if (!drag) return;
     const onMove = (e: MouseEvent) => {
       if (drag.kind === 'edge') {
-        const t = xToTime(e.clientX);
-        onResizeEdge(drag.id, drag.edge, t);
+        onResizeEdge(drag.id, drag.edge, xToTime(e.clientX));
       } else if (drag.kind === 'create') {
         setDrag({ ...drag, currentX: e.clientX });
       } else if (drag.kind === 'scrub') {
-        onSeek(xToTime(e.clientX));
+        onSeek(xToTimeOnElement(e.clientX, scrubberRef.current));
       }
     };
     const onUp = (e: MouseEvent) => {
@@ -119,9 +125,8 @@ export function Timeline({
           const b = xToTime(e.clientX);
           onCreateSegment(Math.min(a, b), Math.max(a, b));
         } else {
-          // Treat as click on empty: clear selection AND seek.
+          // Click on empty area without drag: clear selection.
           onClearSelection();
-          onSeek(xToTime(e.clientX));
         }
       }
       setDrag(null);
@@ -135,22 +140,19 @@ export function Timeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag]);
 
-  // Cursor indicator on hover (without drag in progress).
+  // Track-row hover cursor (no scrub here — that lives on the scrubber).
   const [hoverCursor, setHoverCursor] = useState<string>('default');
-  const onHoverMove = (e: React.MouseEvent) => {
+  const onTrackHoverMove = (e: React.MouseEvent) => {
     if (drag) return;
     if (findEdgeUnderCursor(e.clientX)) setHoverCursor('ew-resize');
     else if (findSegmentUnderCursor(e.clientX)) setHoverCursor('pointer');
     else setHoverCursor('crosshair');
   };
 
-  // Render a few ticks for the ruler.
   const ticks = useMemo(() => {
     if (duration <= 0) return [];
     const target = 8;
-    const niceSteps = [
-      0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600
-    ];
+    const niceSteps = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600];
     const ideal = duration / target;
     const step = niceSteps.find((s) => s >= ideal) ?? niceSteps[niceSteps.length - 1];
     const arr: number[] = [];
@@ -158,7 +160,6 @@ export function Timeline({
     return arr;
   }, [duration]);
 
-  // Live preview of create-drag rectangle.
   let createPreview: { start: number; end: number } | null = null;
   if (drag?.kind === 'create') {
     const a = xToTime(drag.startX);
@@ -166,30 +167,33 @@ export function Timeline({
     createPreview = { start: Math.min(a, b), end: Math.max(a, b) };
   }
 
+  const totalHeight = SCRUBBER_HEIGHT + TRACK_HEIGHT;
+
   return (
     <div
-      ref={containerRef}
-      onMouseDown={onMouseDown}
-      onMouseMove={onHoverMove}
-      onContextMenu={(e) => e.preventDefault()}
       style={{
         position: 'relative',
-        height: TIMELINE_HEIGHT + RULER_HEIGHT,
+        height: totalHeight,
         background: '#1f1f1f',
         borderTop: '1px solid #3a3a3a',
-        userSelect: 'none',
-        cursor: drag?.kind === 'edge' ? 'ew-resize' : hoverCursor
+        userSelect: 'none'
       }}
+      onContextMenu={(e) => e.preventDefault()}
     >
-      {/* Ruler */}
+      {/* Scrubber row: click + drag anywhere to seek */}
       <div
+        ref={scrubberRef}
+        onMouseDown={onScrubberMouseDown}
         style={{
           position: 'relative',
-          height: RULER_HEIGHT,
+          height: SCRUBBER_HEIGHT,
+          background: '#272727',
           borderBottom: '1px solid #303030',
+          cursor: duration > 0 ? (drag?.kind === 'scrub' ? 'grabbing' : 'pointer') : 'default',
           fontSize: 10,
           color: '#888'
         }}
+        title="Click or drag to scrub"
       >
         {ticks.map((t) => (
           <div
@@ -201,23 +205,39 @@ export function Timeline({
               bottom: 0,
               borderLeft: '1px solid #383838',
               paddingLeft: 3,
-              transform: 'translateX(0)'
+              pointerEvents: 'none'
             }}
           >
             {formatDuration(t)}
           </div>
         ))}
+        {/* Filled progress region from 0 → currentTime to make the scrubber readable */}
+        {duration > 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: `${timeToPct(currentTime)}%`,
+              background: 'rgba(255, 77, 77, 0.18)',
+              pointerEvents: 'none'
+            }}
+          />
+        )}
       </div>
 
-      {/* Track */}
+      {/* Segment track row */}
       <div
+        ref={trackRef}
+        onMouseDown={onTrackMouseDown}
+        onMouseMove={onTrackHoverMove}
         style={{
           position: 'relative',
-          height: TIMELINE_HEIGHT,
-          margin: 0
+          height: TRACK_HEIGHT,
+          cursor: drag?.kind === 'edge' ? 'ew-resize' : hoverCursor
         }}
       >
-        {/* Segments */}
         {sorted.map((s) => {
           const isSelected = selected.has(s.id);
           return (
@@ -243,7 +263,6 @@ export function Timeline({
           );
         })}
 
-        {/* Create-drag preview */}
         {createPreview && (
           <div
             style={{
@@ -259,7 +278,6 @@ export function Timeline({
           />
         )}
 
-        {/* Pending in-point flag */}
         {pendingIn != null && duration > 0 && (
           <div
             style={{
@@ -289,23 +307,37 @@ export function Timeline({
             </div>
           </div>
         )}
+      </div>
 
-        {/* Playhead */}
-        {duration > 0 && (
+      {/* Playhead spans both rows */}
+      {duration > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            left: `${timeToPct(currentTime)}%`,
+            width: 2,
+            background: '#ff4d4d',
+            pointerEvents: 'none',
+            transform: 'translateX(-1px)'
+          }}
+        >
+          {/* Playhead "head" handle on the scrubber row */}
           <div
             style={{
               position: 'absolute',
-              top: -RULER_HEIGHT,
-              bottom: 0,
-              left: `${timeToPct(currentTime)}%`,
-              width: 2,
+              top: 0,
+              left: -5,
+              width: 12,
+              height: 12,
               background: '#ff4d4d',
-              pointerEvents: 'none',
-              transform: 'translateX(-1px)'
+              borderRadius: 2,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.6)'
             }}
           />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
